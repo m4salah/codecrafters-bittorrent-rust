@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env,
     fmt::{Display, Write},
 };
@@ -7,6 +8,7 @@ enum Bencode {
     String(String),
     Integer(i64),
     List(Vec<Bencode>),
+    Dictionary(HashMap<String, Bencode>),
 }
 
 impl Display for Bencode {
@@ -23,6 +25,17 @@ impl Display for Bencode {
                     }
                 }
                 f.write_char(']')?;
+                Ok(())
+            }
+            Bencode::Dictionary(hm) => {
+                f.write_char('{')?;
+                for (i, (key, value)) in hm.iter().enumerate() {
+                    f.write_str(format!(r#""{key}": {value}"#).as_str())?;
+                    if i + 1 < hm.len() {
+                        f.write_str(", ")?;
+                    }
+                }
+                f.write_char('}')?;
                 Ok(())
             }
         }
@@ -59,6 +72,25 @@ fn decode_bencoded_value(encoded_value: &str) -> (Bencode, &str) {
                 rest = reminder;
             }
             return (Bencode::List(values), &rest[1..]);
+        }
+        'd' => {
+            let mut values = HashMap::new();
+            let mut rest = encoded_value.split_at(1).1;
+
+            while !rest.is_empty() && !rest.starts_with('e') {
+                let (key, reminder) = decode_bencoded_value(rest);
+                let (value, reminder) = decode_bencoded_value(reminder);
+
+                match key {
+                    Bencode::String(s) => {
+                        values.insert(s, value);
+                        rest = reminder;
+                    }
+                    _ => {}
+                }
+            }
+
+            return (Bencode::Dictionary(values), &rest[1..]);
         }
         '0'..='9' => {
             if let Some((len, rest)) = encoded_value.split_once(':') {
