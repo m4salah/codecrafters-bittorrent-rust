@@ -33,6 +33,7 @@ impl Display for Bencode {
 fn decode_bencoded_value(encoded_value: &str) -> (Bencode, &str) {
     // If encoded_value starts with a digit, it's a number
     let bencode_identifier = encoded_value.chars().next().unwrap();
+    eprintln!("{bencode_identifier}, {encoded_value}");
     match bencode_identifier {
         'i' => {
             if let Some((n, rest)) =
@@ -57,7 +58,7 @@ fn decode_bencoded_value(encoded_value: &str) -> (Bencode, &str) {
                 values.push(v);
                 rest = reminder;
             }
-            return (Bencode::List(values), rest);
+            return (Bencode::List(values), &rest[1..]);
         }
         '0'..='9' => {
             if let Some((len, rest)) = encoded_value.split_once(':') {
