@@ -13,12 +13,12 @@ mod bendecoder;
 // Usage: your_bittorrent.sh info "<file>.torrent"
 
 #[derive(Deserialize, Debug)]
-struct TorrentMetaInfo {
+struct TorrentInfo {
     pub announce: String,
     pub info: Info,
 }
 
-impl Display for TorrentMetaInfo {
+impl Display for TorrentInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(format!("Tracker URL: {}", self.announce).as_str())?;
         f.write_char('\n')?;
@@ -37,9 +37,9 @@ impl Display for Info {
     }
 }
 
-fn parse_torrent(torrent_path: &str) -> Result<TorrentMetaInfo, anyhow::Error> {
+fn parse_torrent(torrent_path: &str) -> Result<TorrentInfo, anyhow::Error> {
     let torrent_byte = fs::read(torrent_path)?;
-    let decoded: TorrentMetaInfo = serde_bencode::from_bytes(&torrent_byte)?;
+    let decoded: TorrentInfo = serde_bencode::from_bytes(&torrent_byte)?;
     Ok(decoded)
 }
 fn main() {
