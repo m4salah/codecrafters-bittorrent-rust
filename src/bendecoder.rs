@@ -1,13 +1,14 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     fmt::{Display, Write},
 };
 
+#[allow(dead_code)]
 pub enum Bencode {
     String(String),
     Integer(i64),
     List(Vec<Bencode>),
-    Dictionary(HashMap<String, Bencode>),
+    Dictionary(BTreeMap<String, Bencode>),
 }
 
 impl Display for Bencode {
@@ -20,7 +21,7 @@ impl Display for Bencode {
                 for (i, bencode) in l.iter().enumerate() {
                     f.write_str(format!("{bencode}").as_str())?;
                     if i + 1 < l.len() {
-                        f.write_str(", ")?;
+                        f.write_str(",")?;
                     }
                 }
                 f.write_char(']')?;
@@ -29,9 +30,9 @@ impl Display for Bencode {
             Bencode::Dictionary(hm) => {
                 f.write_char('{')?;
                 for (i, (key, value)) in hm.iter().enumerate() {
-                    f.write_str(format!(r#""{key}": {value}"#).as_str())?;
+                    f.write_str(format!(r#""{key}":{value}"#).as_str())?;
                     if i + 1 < hm.len() {
-                        f.write_str(", ")?;
+                        f.write_str(",")?;
                     }
                 }
                 f.write_char('}')?;
@@ -41,6 +42,7 @@ impl Display for Bencode {
     }
 }
 
+#[allow(dead_code)]
 pub fn decode_bencoded_value(encoded_value: &str) -> (Bencode, &str) {
     // If encoded_value starts with a digit, it's a number
     let bencode_identifier = encoded_value.chars().next().unwrap();
@@ -72,7 +74,7 @@ pub fn decode_bencoded_value(encoded_value: &str) -> (Bencode, &str) {
             return (Bencode::List(values), &rest[1..]);
         }
         'd' => {
-            let mut values = HashMap::new();
+            let mut values = BTreeMap::new();
             let mut rest = encoded_value.split_at(1).1;
 
             while !rest.is_empty() && !rest.starts_with('e') {
@@ -81,6 +83,7 @@ pub fn decode_bencoded_value(encoded_value: &str) -> (Bencode, &str) {
 
                 match key {
                     Bencode::String(s) => {
+                        eprintln!("key: {s}, value: {value}");
                         values.insert(s, value);
                         rest = reminder;
                     }
