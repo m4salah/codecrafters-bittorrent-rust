@@ -40,6 +40,7 @@ impl Display for Info {
 fn parse_torrent(torrent_path: &str) -> Result<TorrentInfo, anyhow::Error> {
     let torrent_byte = fs::read(torrent_path)?;
     let decoded: TorrentInfo = serde_bencode::from_bytes(&torrent_byte)?;
+
     Ok(decoded)
 }
 fn main() {
