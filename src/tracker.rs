@@ -29,9 +29,16 @@ impl TrackerResponse {
         return peers;
     }
 }
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Peer(SocketAddrV4);
 
+#[allow(dead_code)]
+impl Peer {
+    pub fn addr(&self) -> SocketAddrV4 {
+        self.0
+    }
+}
 impl Display for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{}", self.0))

@@ -1,4 +1,9 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    io::{Read, Write},
+    net::{SocketAddrV4, TcpStream},
+    path::PathBuf,
+};
 
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
@@ -53,6 +58,17 @@ impl Torrent {
         let hex = hex::encode(hash);
         Ok(hex)
     }
+
+    pub fn info_hash_bytes(&self) -> [u8; 20] {
+        let bytes = serde_bencode::to_bytes(&self.info).expect("it must be valid bytes");
+        let mut hasher = <Sha1 as Digest>::new();
+        hasher.update(&bytes);
+        hasher
+            .finalize()
+            .try_into()
+            .expect("GenericArray<_, 20> == [_; 20]")
+    }
+
     pub fn info_hash_urlencoded(&self) -> Result<String, anyhow::Error> {
         let hash = self.info_hash_hex()?;
 
@@ -83,5 +99,47 @@ impl Torrent {
         let decoded: TrackerResponse = serde_bencode::from_bytes(&response)?;
 
         Ok(decoded.all_peers())
+    }
+
+    pub async fn peer_handshake(&self, peer_addr: SocketAddrV4) -> anyhow::Result<String> {
+        let mut stream = TcpStream::connect(peer_addr)?;
+
+        eprintln!("connected to {peer_addr}");
+        let mut message = Vec::with_capacity(68);
+
+        // length of the protocol string (BitTorrent protocol) which is 19 (1 byte)
+        message.push(19);
+
+        // the string BitTorrent protocol (19 bytes)
+        for byte in b"BitTorrent protocol" {
+            message.push(*byte);
+        }
+
+        // eight reserved bytes, which are all set to zero (8 bytes)
+        for byte in [0u8; 8] {
+            message.push(byte);
+        }
+
+        // sha1 infohash (20 bytes) (NOT the hexadecimal representation, which is 40 bytes long)
+        for byte in self.info_hash_bytes() {
+            message.push(byte);
+        }
+
+        // peer id (20 bytes) (you can use 00112233445566778899 for this challenge)
+        for byte in b"00112233445566778899" {
+            message.push(*byte);
+        }
+
+        eprintln!(
+            "sent {:?} of length {}, to {peer_addr}",
+            &message,
+            message.len()
+        );
+
+        stream.write_all(message.as_slice())?;
+
+        let mut buffer = [0u8; 68];
+        stream.read_exact(&mut buffer)?;
+        Ok(hex::encode(&buffer[48..]))
     }
 }
