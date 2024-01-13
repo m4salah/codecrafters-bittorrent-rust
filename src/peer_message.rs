@@ -111,7 +111,6 @@ impl PeerMessage {
         stream.read_exact(&mut message_size).unwrap();
 
         let message_size = u32::from_be_bytes(message_size);
-        eprintln!("{}", message_size);
 
         let mut buf = vec![0; message_size as usize];
         stream.read_exact(&mut buf).unwrap();

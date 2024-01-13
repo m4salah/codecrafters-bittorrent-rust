@@ -192,7 +192,6 @@ impl Torrent {
         };
 
         while remaining_bytes != 0 {
-            eprintln!("{}, {}, {}", remaining_bytes, block_index, block_length);
             if remaining_bytes < block_length as usize {
                 block_length = remaining_bytes as u32;
             }
