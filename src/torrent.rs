@@ -200,15 +200,6 @@ impl Torrent {
         };
 
         while remaining_bytes != 0 {
-            eprintln!(
-                "1: {}, {}, {}, {}, {}, {}",
-                remaining_bytes,
-                piece_index,
-                block_index,
-                block_length,
-                self.info.pieces.len(),
-                self.info.piece_length
-            );
             if remaining_bytes < block_length as usize {
                 block_length = remaining_bytes as u32;
             }
@@ -222,20 +213,23 @@ impl Torrent {
             );
 
             let read_incoming_message = PeerMessage::read_message(&mut stream);
-            eprintln!("02: {:?}", read_incoming_message.tag);
             if read_incoming_message.tag == MessageTag::Piece {
-                eprintln!("2");
                 piece_data.extend(read_incoming_message.payload);
             }
             remaining_bytes -= block_length as usize;
             block_index += 1;
-
-            eprintln!(
-                "3: {}, {}, {}, {}",
-                remaining_bytes, piece_index, block_index, block_length
-            );
         }
 
         Ok(piece_data)
+    }
+
+    pub async fn download_all(&self) -> anyhow::Result<Vec<u8>> {
+        let mut file = Vec::new();
+        for i in 0..(self.info.pieces.len() / 20) {
+            let piece = self.download_piece(i as u32).await?;
+            file.extend(piece);
+        }
+
+        Ok(file)
     }
 }

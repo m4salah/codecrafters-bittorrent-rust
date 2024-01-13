@@ -39,6 +39,11 @@ enum Commands {
         torrent: PathBuf,
         piece: u32,
     },
+    Download {
+        #[arg(short, long)]
+        output: PathBuf,
+        torrent: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -84,6 +89,12 @@ async fn main() -> anyhow::Result<()> {
             let torrent = Torrent::new(torrent)?;
             let data = torrent.download_piece(piece).await?;
             fs::write(output, data).unwrap();
+        }
+        Commands::Download { output, torrent } => {
+            let torrent_file = Torrent::new(torrent.clone())?;
+            let data = torrent_file.download_all().await?;
+            fs::write(output.clone(), data).unwrap();
+            println!("Downloaded {:?} to {:?}.", torrent, output);
         }
     }
     Ok(())
