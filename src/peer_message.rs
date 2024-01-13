@@ -51,7 +51,7 @@ impl PeerMessage {
         let length = 1 + self.payload.len();
 
         let mut message = Vec::with_capacity(
-            /* message tag */ 1 + /* prefix message length */ 4 + length,
+            /* message tag */ 1 + /* prefix message length */ 4 + self.payload.len(),
         );
 
         // Length prefix (4 bytes)

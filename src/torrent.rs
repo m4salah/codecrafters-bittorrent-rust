@@ -173,6 +173,14 @@ impl Torrent {
         .as_bytes();
         stream.write_all(&message)?;
 
+        // Wait until we receive unchoke message
+        loop {
+            let peer_message = PeerMessage::read_message(&mut stream); // Read Unchoke message
+            if peer_message.tag == MessageTag::Unchoke {
+                break;
+            }
+        }
+
         let mut piece_data = Vec::new();
 
         let mut block_index: u32 = 0;
@@ -192,6 +200,15 @@ impl Torrent {
         };
 
         while remaining_bytes != 0 {
+            eprintln!(
+                "1: {}, {}, {}, {}, {}, {}",
+                remaining_bytes,
+                piece_index,
+                block_index,
+                block_length,
+                self.info.pieces.len(),
+                self.info.piece_length
+            );
             if remaining_bytes < block_length as usize {
                 block_length = remaining_bytes as u32;
             }
@@ -205,12 +222,18 @@ impl Torrent {
             );
 
             let read_incoming_message = PeerMessage::read_message(&mut stream);
+            eprintln!("02: {:?}", read_incoming_message.tag);
             if read_incoming_message.tag == MessageTag::Piece {
+                eprintln!("2");
                 piece_data.extend(read_incoming_message.payload);
             }
-
             remaining_bytes -= block_length as usize;
             block_index += 1;
+
+            eprintln!(
+                "3: {}, {}, {}, {}",
+                remaining_bytes, piece_index, block_index, block_length
+            );
         }
 
         Ok(piece_data)
