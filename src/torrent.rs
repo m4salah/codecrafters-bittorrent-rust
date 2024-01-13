@@ -5,10 +5,14 @@ use std::{
     path::PathBuf,
 };
 
+use anyhow::Ok;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
-use crate::tracker::{Peer, TrackerResponse};
+use crate::{
+    peer_message::{MessageTag, PeerMessage},
+    tracker::{Peer, TrackerResponse},
+};
 
 /// Metainfo files (also known as .torrent files).
 #[derive(Clone, Deserialize, Serialize, Debug)]
@@ -19,6 +23,7 @@ pub struct Torrent {
     pub info: Info,
 }
 
+const PEER_ID: &[u8; 20] = b"00112233445566778899";
 #[allow(dead_code)]
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct Info {
@@ -101,9 +106,12 @@ impl Torrent {
         Ok(decoded.all_peers())
     }
 
-    pub async fn peer_handshake(&self, peer_addr: SocketAddrV4) -> anyhow::Result<String> {
-        let mut stream = TcpStream::connect(peer_addr)?;
-
+    fn make_handshake(
+        &self,
+        stream: &mut TcpStream,
+        peer_addr: SocketAddrV4,
+        peer_id: [u8; 20],
+    ) -> anyhow::Result<()> {
         eprintln!("connected to {peer_addr}");
         let mut message = Vec::with_capacity(68);
 
@@ -125,21 +133,87 @@ impl Torrent {
             message.push(byte);
         }
 
-        // peer id (20 bytes) (you can use 00112233445566778899 for this challenge)
-        for byte in b"00112233445566778899" {
-            message.push(*byte);
+        // peer id (20 bytes)
+        for byte in peer_id {
+            message.push(byte);
         }
 
-        eprintln!(
-            "sent {:?} of length {}, to {peer_addr}",
-            &message,
-            message.len()
-        );
-
         stream.write_all(message.as_slice())?;
+        Ok(())
+    }
 
+    pub fn peer_handshake(&self, peer_addr: SocketAddrV4) -> anyhow::Result<String> {
+        let mut stream = TcpStream::connect(peer_addr)?;
+        self.make_handshake(&mut stream, peer_addr, *PEER_ID)?;
         let mut buffer = [0u8; 68];
         stream.read_exact(&mut buffer)?;
         Ok(hex::encode(&buffer[48..]))
+    }
+
+    pub async fn download_piece(&self, piece_index: u32) -> anyhow::Result<Vec<u8>> {
+        // retrieve random peer to make a handshake with
+        // TODO: for now there is not rand crate so i will get the first peer.
+        let peers = self.discover_peers().await?;
+        let peer = peers.first().expect("there is no peer");
+
+        let mut stream = TcpStream::connect(peer.addr())?;
+
+        // make handshake and receive the first message
+        self.make_handshake(&mut stream, peer.addr(), *PEER_ID)?;
+        let mut buffer = [0u8; 68];
+        stream.read_exact(&mut buffer)?;
+
+        PeerMessage::read_message(&mut stream); // Read bitfield message
+
+        // send interest message
+        let message = PeerMessage {
+            payload: Vec::new(),
+            tag: MessageTag::Interested,
+        }
+        .as_bytes();
+        stream.write_all(&message)?;
+
+        let mut piece_data = Vec::new();
+
+        let mut block_index: u32 = 0;
+        let mut block_length: u32 = 16 * 1024;
+
+        let mut remaining_bytes = if piece_index < (self.info.pieces.len() / 20 - 1) as u32 {
+            // a piece hash is 20 bytes in length
+            self.info.piece_length
+        } else {
+            let last_len = self.info.length % self.info.piece_length;
+
+            if last_len == 0 {
+                self.info.piece_length
+            } else {
+                last_len
+            }
+        };
+
+        while remaining_bytes != 0 {
+            eprintln!("{}, {}, {}", remaining_bytes, block_index, block_length);
+            if remaining_bytes < block_length as usize {
+                block_length = remaining_bytes as u32;
+            }
+
+            // send request message
+            PeerMessage::send_request_piece(
+                &mut stream,
+                piece_index as u32,
+                block_index * (16 * 1024),
+                block_length,
+            );
+
+            let read_incoming_message = PeerMessage::read_message(&mut stream);
+            if read_incoming_message.tag == MessageTag::Piece {
+                piece_data.extend(read_incoming_message.payload);
+            }
+
+            remaining_bytes -= block_length as usize;
+            block_index += 1;
+        }
+
+        Ok(piece_data)
     }
 }
