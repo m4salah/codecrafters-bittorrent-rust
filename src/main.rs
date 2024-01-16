@@ -1,12 +1,7 @@
 use std::{fs, net::SocketAddrV4, path::PathBuf};
 
+use bittorrent_starter_rust::{bendecoder::decode_bencoded_value, torrent::Torrent};
 use clap::{Parser, Subcommand};
-
-use crate::{bendecoder::decode_bencoded_value, torrent::Torrent};
-mod bendecoder;
-mod peer_message;
-mod torrent;
-mod tracker;
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 // Usage: your_bittorrent.sh info "<file>.torrent"
@@ -77,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Handshake { torrent, peer_addr } => {
             let torrent = Torrent::new(torrent)?;
-            let peer_id = torrent.peer_handshake(peer_addr)?;
+            let peer_id = torrent.peer_handshake(peer_addr).await?;
             println!("Peer ID: {}", peer_id);
         }
         Commands::DownloadPiece {

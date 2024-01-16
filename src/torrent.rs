@@ -1,17 +1,15 @@
-use std::{
-    fs,
-    io::{Read, Write},
-    net::{SocketAddrV4, TcpStream},
-    path::PathBuf,
-};
+use std::{fs, net::SocketAddrV4, path::PathBuf};
 
-use anyhow::Ok;
+use anyhow::Context;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
-    peer_message::{MessageTag, PeerMessage},
+    peer_message::{Message, MessageFramer, MessageTag},
     tracker::{Peer, TrackerResponse},
+    BLOCK_MAX,
 };
 
 /// Metainfo files (also known as .torrent files).
@@ -106,9 +104,9 @@ impl Torrent {
         Ok(decoded.all_peers())
     }
 
-    fn make_handshake(
+    async fn make_handshake(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut tokio::net::TcpStream,
         peer_addr: SocketAddrV4,
         peer_id: [u8; 20],
     ) -> anyhow::Result<()> {
@@ -138,15 +136,16 @@ impl Torrent {
             message.push(byte);
         }
 
-        stream.write_all(message.as_slice())?;
+        stream.write_all(message.as_slice()).await?;
         Ok(())
     }
 
-    pub fn peer_handshake(&self, peer_addr: SocketAddrV4) -> anyhow::Result<String> {
-        let mut stream = TcpStream::connect(peer_addr)?;
-        self.make_handshake(&mut stream, peer_addr, *PEER_ID)?;
+    pub async fn peer_handshake(&self, peer_addr: SocketAddrV4) -> anyhow::Result<String> {
+        let mut stream = tokio::net::TcpStream::connect(peer_addr).await?;
+        self.make_handshake(&mut stream, peer_addr, *PEER_ID)
+            .await?;
         let mut buffer = [0u8; 68];
-        stream.read_exact(&mut buffer)?;
+        stream.read_exact(&mut buffer).await?;
         Ok(hex::encode(&buffer[48..]))
     }
 
@@ -154,37 +153,41 @@ impl Torrent {
         // retrieve random peer to make a handshake with
         // TODO: for now there is not rand crate so i will get the first peer.
         let peers = self.discover_peers().await?;
-        let peer = peers.first().expect("there is no peer");
+        let peer = peers.last().expect("there is no peer");
 
-        let mut stream = TcpStream::connect(peer.addr())?;
+        let mut stream = tokio::net::TcpStream::connect(peer.addr()).await?;
 
         // make handshake and receive the first message
-        self.make_handshake(&mut stream, peer.addr(), *PEER_ID)?;
+        self.make_handshake(&mut stream, peer.addr(), *PEER_ID)
+            .await
+            .context("handshake failed")?;
         let mut buffer = [0u8; 68];
-        stream.read_exact(&mut buffer)?;
+        stream.read_exact(&mut buffer).await?;
 
-        PeerMessage::read_message(&mut stream); // Read bitfield message
+        let mut peer = tokio_util::codec::Framed::new(stream, MessageFramer);
+
+        let bitfiel_message = peer.next().await;
+        eprintln!("Message: {:?}", bitfiel_message);
 
         // send interest message
-        let message = PeerMessage {
-            payload: Vec::new(),
+        peer.send(Message {
             tag: MessageTag::Interested,
-        }
-        .as_bytes();
-        stream.write_all(&message)?;
+            payload: Vec::new(),
+        })
+        .await
+        .context("send interested message fail")?;
 
         // Wait until we receive unchoke message
         loop {
-            let peer_message = PeerMessage::read_message(&mut stream); // Read Unchoke message
-            if peer_message.tag == MessageTag::Unchoke {
-                break;
+            if let Some(Ok(message)) = peer.next().await {
+                if message.tag == MessageTag::Unchoke {
+                    break;
+                }
             }
         }
 
-        let mut piece_data = Vec::new();
-
         let mut block_index: u32 = 0;
-        let mut block_length: u32 = 16 * 1024;
+        let mut block_length: u32 = BLOCK_MAX as u32;
 
         let mut remaining_bytes = if piece_index < (self.info.pieces.len() / 20 - 1) as u32 {
             // a piece hash is 20 bytes in length
@@ -199,22 +202,31 @@ impl Torrent {
             }
         };
 
+        let mut piece_data = Vec::new();
         while remaining_bytes != 0 {
             if remaining_bytes < block_length as usize {
                 block_length = remaining_bytes as u32;
             }
 
             // send request message
-            PeerMessage::send_request_piece(
-                &mut stream,
+            peer.send(Message::new_request(
                 piece_index as u32,
-                block_index * (16 * 1024),
+                block_index * BLOCK_MAX as u32,
                 block_length,
-            );
+            ))
+            .await
+            .context("sending request message fail")?;
 
-            let read_incoming_message = PeerMessage::read_message(&mut stream);
-            if read_incoming_message.tag == MessageTag::Piece {
-                piece_data.extend(read_incoming_message.payload);
+            // read the next message it must be piece message containing the piece data.
+            if let Some(Ok(message)) = peer.next().await {
+                if message.tag == MessageTag::Piece {
+                    // TODO: export it to a function -> get the block of the piece message
+                    // the piece message payload structure
+                    // [0..4] -> index
+                    // [4..8] -> begin
+                    // [8..] -> block data usually 2^14 bytes long (we copy the block data only)
+                    piece_data.extend_from_slice(&message.payload[8..]);
+                }
             }
             remaining_bytes -= block_length as usize;
             block_index += 1;
